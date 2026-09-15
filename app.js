@@ -13,9 +13,11 @@
     rateDraft: {},
     nextUpDraft: { pickedBy:"", house:"" },
     showAddForm: false,
+    modalView: null,   // null | "edit" | "stats"
     editId: null,      // night being edited in the modal
     editDraft: null,   // its in-progress values
-    editError: ""
+    editError: "",
+    statsKey: null     // which month row the stats dialog is for
   };
 
   var app = document.getElementById("app");
@@ -503,7 +505,12 @@
     var nowHtml = renderNowCard(featured);
     var groups = groupByMonth(descAll);
     var rowsHtml = groups.map(function(g){
-      return '<div class="row-heading"><h2>' + esc(g.label) + '</h2><span class="micro">' + g.items.length + ' title' + (g.items.length===1?"":"s") + '</span></div>' +
+      return '<div class="row-heading"><h2>' + esc(g.label) + '</h2>' +
+          '<div class="row-heading-end">' +
+            '<span class="micro">' + g.items.length + ' title' + (g.items.length===1?"":"s") + '</span>' +
+            '<button class="row-stats" data-action="month-stats" data-key="' + esc(g.key) + '">Stats</button>' +
+          '</div>' +
+        '</div>' +
         '<div class="carousel">' + g.items.map(function(n){ return renderThumb(n, numberOf[n.id]); }).join("") + '</div>';
     }).join("");
     var selected = state.selectedId ? state.nights.find(function(x){ return x.id === state.selectedId; }) : null;
@@ -630,12 +637,68 @@
     '</div>';
   }
 
+  // ---------- month stats ----------
+  // Counts every value in `pick`, biggest first. Genres arrive as arrays and
+  // guests as one row per person, so pick() returns an array either way.
+  function tally(items, pick){
+    var counts = {};
+    items.forEach(function(n){
+      (pick(n) || []).forEach(function(v){
+        v = String(v == null ? "" : v).trim();
+        if (v) counts[v] = (counts[v] || 0) + 1;
+      });
+    });
+    return Object.keys(counts)
+      .map(function(k){ return [k, counts[k]]; })
+      .sort(function(a, b){ return b[1] - a[1] || a[0].localeCompare(b[0]); });
+  }
+
+  function decadeOf(year){
+    var y = parseInt(year, 10);
+    if (!y || y < 1870 || y > 2999) return "";
+    return String(Math.floor(y / 10) * 10) + "s";
+  }
+
+  function monthStats(items){
+    var rated = items.filter(function(n){ return n.ratings && n.ratings.length; });
+    var scores = [];
+    items.forEach(function(n){
+      (n.ratings || []).forEach(function(r){
+        var v = Number(r.score);
+        if (!isNaN(v)) scores.push(v);
+      });
+    });
+    var avg = scores.length ? scores.reduce(function(a, b){ return a + b; }, 0) / scores.length : null;
+
+    var best = null;
+    rated.forEach(function(n){
+      var v = avgRating(n);
+      if (v !== null && (!best || v > best.score)) best = { movie: n.movie, score: v };
+    });
+
+    return {
+      count: items.length,
+      ratedCount: rated.length,
+      avg: avg,
+      best: best,
+      genres: tally(items, function(n){ return n.genres || []; }),
+      decades: tally(items, function(n){ return [decadeOf(n.year)]; }),
+      curators: tally(items, function(n){ return [n.pickedBy]; }),
+      guests: tally(items, function(n){ return n.attendees || []; }),
+      directors: tally(items, function(n){ return [n.director]; }),
+      // How much of this month TMDB has actually filled in, which is what
+      // decides whether the genre and decade panels can say anything.
+      enriched: items.filter(function(n){ return n.metaState === "found"; }).length
+    };
+  }
+
   // ---------- edit dialog ----------
   var modalHost = document.getElementById("modal");
 
   function openEdit(id){
     var n = state.nights.find(function(x){ return x.id === id; });
     if (!n) return;
+    state.modalView = "edit";
     state.editId = id;
     state.editError = "";
     state.editDraft = {
@@ -649,17 +712,25 @@
     renderModal();
   }
 
-  function closeEdit(){
+  function closeModal(){
+    state.modalView = null;
     state.editId = null;
     state.editDraft = null;
     state.editError = "";
+    state.statsKey = null;
+    renderModal();
+  }
+
+  function openStats(key){
+    state.modalView = "stats";
+    state.statsKey = key;
     renderModal();
   }
 
   function saveEdit(){
     var d = state.editDraft;
     var n = state.nights.find(function(x){ return x.id === state.editId; });
-    if (!n || !d) return closeEdit();
+    if (!n || !d) return closeModal();
     var movie = titleCase(d.movie);
     var pickedBy = String(d.pickedBy || "").trim();
     if (!movie || !pickedBy || !d.date){
@@ -668,7 +739,7 @@
       return;
     }
     var id = state.editId;
-    closeEdit();
+    closeModal();
     updateNight(id, {
       date: d.date,
       movie: movie,
@@ -681,15 +752,22 @@
 
   function renderModal(){
     if (!modalHost) return;
-    if (!state.editId || !state.editDraft){
+    if (!state.modalView){
       modalHost.innerHTML = "";
       modalHost.classList.remove("open");
       document.body.classList.remove("modal-open");
       return;
     }
-    var d = state.editDraft;
     modalHost.classList.add("open");
     document.body.classList.add("modal-open");
+    if (state.modalView === "stats"){
+      modalHost.innerHTML =
+        '<div class="modal-backdrop" data-action="close-edit"></div>' +
+        renderStatsModal();
+      bindModal();
+      return;
+    }
+    var d = state.editDraft;
     modalHost.innerHTML =
       '<div class="modal-backdrop" data-action="close-edit"></div>' +
       '<div class="modal-card" role="dialog" aria-modal="true" aria-label="Edit screening">' +
@@ -721,9 +799,88 @@
     bindModal();
   }
 
+  function barList(pairs, limit){
+    var rows = pairs.slice(0, limit || 6);
+    if (!rows.length) return "";
+    var top = rows[0][1];
+    return '<div class="bars">' + rows.map(function(r){
+      var pct = top ? Math.max(6, Math.round((r[1] / top) * 100)) : 0;
+      return '<div class="bar-row">' +
+        '<span class="bar-label">' + esc(r[0]) + '</span>' +
+        '<span class="bar-track"><span class="bar-fill" style="width:' + pct + '%"></span></span>' +
+        '<span class="bar-count tnum">' + r[1] + '</span>' +
+      '</div>';
+    }).join("") + '</div>';
+  }
+
+  function statPanel(title, body, note){
+    if (!body) body = '<p class="panel-empty">' + esc(note || "Nothing to show yet.") + '</p>';
+    return '<div class="stat-panel"><div class="micro">' + esc(title) + '</div>' + body + '</div>';
+  }
+
+  function renderStatsModal(){
+    var group = groupByMonth(sortedByDateAsc(state.nights).reverse())
+      .find(function(g){ return g.key === state.statsKey; });
+    if (!group){
+      return '<div class="modal-card"><div class="modal-head"><h2>Stats</h2>' +
+        '<button class="add-card-close" data-action="close-edit" title="Close">&times;</button></div>' +
+        '<p class="panel-empty">That month is no longer in the log.</p></div>';
+    }
+
+    var st = monthStats(group.items);
+    // Genres, decades and directors all come from TMDB; without a key there
+    // is nothing to compute, and saying so beats three empty panels.
+    var needsKey = !tmdbKey() && !st.enriched;
+    var missing = st.count - st.enriched;
+    var metaNote = needsKey
+      ? "Add a TMDB key in config.js to see this."
+      : (missing ? missing + " of " + st.count + " still waiting on a TMDB match." : "Nothing to show yet.");
+
+    return '<div class="modal-card stats-card">' +
+      '<div class="modal-head">' +
+        '<div>' +
+          '<h2>' + esc(group.label) + '</h2>' +
+          '<p class="add-sub">' + st.count + ' screening' + (st.count===1?"":"s") +
+            (st.ratedCount ? ', ' + st.ratedCount + ' rated' : ', none rated yet') + '.</p>' +
+        '</div>' +
+        '<button class="add-card-close" data-action="close-edit" title="Close">&times;</button>' +
+      '</div>' +
+
+      '<div class="stat-tiles">' +
+        '<div class="stat-tile"><b class="tnum">' + st.count + '</b><span>screenings</span></div>' +
+        '<div class="stat-tile"><b class="tnum">' + (st.avg !== null ? st.avg.toFixed(1) : "&mdash;") + '</b><span>avg rating</span></div>' +
+        '<div class="stat-tile"><b class="tnum">' + st.curators.length + '</b><span>curator' + (st.curators.length===1?"":"s") + '</span></div>' +
+        '<div class="stat-tile"><b class="tnum">' + st.guests.length + '</b><span>people on the couch</span></div>' +
+      '</div>' +
+
+      (st.best ? '<div class="stat-highlight">' +
+        '<span class="micro">Best of the month</span>' +
+        '<div><strong>' + esc(st.best.movie) + '</strong> ' +
+          '<span class="rating-tag tier-' + ratingTier(st.best.score) + '"><span class="star">&#9733;</span>' +
+          st.best.score.toFixed(1) + '</span></div>' +
+      '</div>' : "") +
+
+      '<div class="stat-grid">' +
+        statPanel("Top genres", barList(st.genres, 6), metaNote) +
+        statPanel("Decades", barList(st.decades, 6), metaNote) +
+        statPanel("Who picked", barList(st.curators, 6), "No picks recorded.") +
+        statPanel("Regulars", barList(st.guests, 6), "No guests recorded.") +
+      '</div>' +
+
+      (st.directors.length ? '<div class="stat-panel"><div class="micro">Directors</div>' +
+        '<div class="chips">' + st.directors.map(function(r){
+          return '<span class="chip">' + esc(r[0]) + (r[1] > 1 ? ' <span class="tnum">&times;' + r[1] + '</span>' : '') + '</span>';
+        }).join("") + '</div></div>' : "") +
+
+      '<div class="modal-actions">' +
+        '<button type="button" class="btn small" data-action="close-edit">Done</button>' +
+      '</div>' +
+    '</div>';
+  }
+
   function bindModal(){
     modalHost.querySelectorAll('[data-action="close-edit"]').forEach(function(el){
-      el.addEventListener("click", closeEdit);
+      el.addEventListener("click", closeModal);
     });
     var f = modalHost.querySelector("#editForm");
     if (!f) return;
@@ -755,7 +912,7 @@
   }
 
   document.addEventListener("keydown", function(e){
-    if (e.key === "Escape" && state.editId) closeEdit();
+    if (e.key === "Escape" && state.modalView) closeModal();
   });
 
   // ---------- recap view ----------
@@ -879,6 +1036,11 @@
       el.addEventListener("click", function(e){
         e.stopPropagation(); // the thumb underneath also handles clicks
         openEdit(el.getAttribute("data-id"));
+      });
+    });
+    app.querySelectorAll('[data-action="month-stats"]').forEach(function(el){
+      el.addEventListener("click", function(){
+        openStats(el.getAttribute("data-key"));
       });
     });
   }
