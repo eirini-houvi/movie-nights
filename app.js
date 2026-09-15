@@ -15,7 +15,8 @@
     editId: null,      // night being edited in the modal
     editDraft: null,   // its in-progress values
     editError: "",
-    statsKey: null     // which month row the stats dialog is for
+    statsKey: null,    // which month row the stats dialog is for
+    detailsId: null    // which screening the details dialog is for
   };
 
   var app = document.getElementById("app");
@@ -268,6 +269,7 @@
       n.imdbId = "";
       n.tmdbId = null;
       n.metaState = "";
+      n.factsState = "";
       n.extraState = "";
     }
     persist();
@@ -386,13 +388,78 @@
         }
         persist();
         render();
+        fetchFacts(live);
       })
       .catch(function(){
         delete metaPending[night.id];
       });
   }
 
-  // ----- genres, director, trailer: TMDB, only with a key -----
+  // ----- genres + director, from Wikidata -----
+  // IMDb's suggestion payload has no genres, but Wikidata indexes films by
+  // their IMDb id (property P345) and its SPARQL endpoint is keyless and
+  // CORS-open, so the id we already stored is enough to ask for the rest.
+  var WIKIDATA_SPARQL = "https://query.wikidata.org/sparql";
+  var factsPending = {};
+
+  // Wikidata spells them "drama film", "romance film", "science fiction film".
+  function tidyGenre(label){
+    var g = String(label || "").trim().replace(/\s+film$/i, "");
+    if (!g) return "";
+    return g.charAt(0).toUpperCase() + g.slice(1);
+  }
+
+  function fetchFacts(night){
+    if (!night || !night.imdbId) return; // needs the IMDb lookup to land first
+    if (night.factsState === "found" || night.factsState === "missing") return;
+    if (factsPending[night.id]) return;
+    factsPending[night.id] = true;
+
+    var query = 'SELECT ?genreLabel ?directorLabel WHERE {' +
+      ' ?film wdt:P345 "' + night.imdbId + '".' +
+      ' OPTIONAL { ?film wdt:P136 ?genre. }' +
+      ' OPTIONAL { ?film wdt:P57 ?director. }' +
+      ' SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }' +
+      '} LIMIT 30';
+
+    fetch(WIKIDATA_SPARQL + "?format=json&query=" + encodeURIComponent(query), {
+      headers: { "Accept": "application/sparql-results+json" }
+    })
+      .then(function(res){
+        if (!res.ok) throw new Error("wikidata " + res.status);
+        return res.json();
+      })
+      .then(function(data){
+        delete factsPending[night.id];
+        var live = liveNight(night.id);
+        if (!live) return;
+        var rows = (data && data.results && data.results.bindings) || [];
+        // One row per genre, with the director repeated on each.
+        var genres = [];
+        var director = "";
+        rows.forEach(function(r){
+          var g = tidyGenre(r.genreLabel && r.genreLabel.value);
+          if (g && genres.indexOf(g) === -1) genres.push(g);
+          if (!director && r.directorLabel && r.directorLabel.value){
+            director = String(r.directorLabel.value);
+          }
+        });
+        if (!genres.length && !director){
+          live.factsState = "missing";
+        } else {
+          if (genres.length) live.genres = genres.slice(0, 3);
+          if (director) live.director = director;
+          live.factsState = "found";
+        }
+        persist();
+        render();
+      })
+      .catch(function(){
+        delete factsPending[night.id];
+      });
+  }
+
+  // ----- an exact trailer link: TMDB, only with a key -----
   function tmdbFetch(path, params){
     var qs = "api_key=" + encodeURIComponent(tmdbKey());
     Object.keys(params || {}).forEach(function(k){
@@ -441,9 +508,12 @@
       return;
     }
     live.tmdbId = details.id || null;
-    live.genres = ((details.genres || []).map(function(g){ return g.name; })
-                   .filter(Boolean)).slice(0, 3);
-    live.director = directorFrom(details.credits);
+    // Wikidata is the primary source for these two; TMDB only fills a gap.
+    if (!live.genres || !live.genres.length){
+      live.genres = ((details.genres || []).map(function(g){ return g.name; })
+                     .filter(Boolean)).slice(0, 3);
+    }
+    if (!live.director) live.director = directorFrom(details.credits);
     // IMDb is trusted for the year, but fill it in if IMDb came up empty.
     if (!live.year) live.year = String(details.release_date || "").slice(0, 4);
     // A poster only if IMDb didn't already supply one.
@@ -460,6 +530,7 @@
 
   function fetchMeta(night){
     fetchPoster(night);
+    fetchFacts(night);
     fetchExtras(night);
   }
 
@@ -566,7 +637,6 @@
     return '<div class="card nextup-card">' +
       '<div class="nextup-top">' +
         '<span class="micro">Up Next</span>' +
-        '<span class="nextup-when tnum">' + esc(fmtDate(when)) + '</span>' +
       '</div>' +
       '<div class="nextup-fields">' +
         '<label class="nextup-field nextup-field-plain">' +
@@ -581,6 +651,18 @@
 
   // "1993 &middot; Drama, Romance &middot; Dir. John Singleton" — each piece only
   // appears once TMDB has actually supplied it.
+  // A trailer button is always offered. An exact link wins when we have one
+  // — pasted in by hand, or fetched from TMDB — and otherwise it opens a
+  // YouTube search for the film, which lands on the trailer in practice.
+  function trailerFor(n){
+    if (isSafeUrl(n.trailerUrl)) return { url: n.trailerUrl, exact: true };
+    var terms = [n.movie || "", n.year || "", "trailer"].join(" ").trim();
+    return {
+      url: "https://www.youtube.com/results?search_query=" + encodeURIComponent(terms),
+      exact: false
+    };
+  }
+
   function metaLine(n, skipYear){
     var bits = [];
     if (n.year && !skipYear) bits.push('<span class="tnum">' + esc(n.year) + '</span>');
@@ -615,7 +697,7 @@
         '<div class="meta">Selected by ' + personHtml(n.pickedBy, 20) + ' <span class="sep">&middot;</span> ' + esc(fmtDate(n.date)) + '</div>' +
         (attendees.length ? '<div class="chips" style="margin-bottom:8px;">' + attendeeChips(attendees) + '</div>' : "") +
         '<div class="now-actions">' +
-          (isSafeUrl(n.trailerUrl) ? '<a class="btn-play" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer"><span class="tri"></span>Trailer</a>' : '<span class="btn-ghost-pill">No trailer yet</span>') +
+          '<a class="btn-play" href="' + esc(trailerFor(n).url) + '" target="_blank" rel="noopener noreferrer"><span class="tri"></span>Trailer</a>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -647,7 +729,7 @@
       (attendees.length ? '<div class="chips">' + attendeeChips(attendees) + '</div>' : "") +
       (n.notes ? '<div class="notes">&ldquo;' + esc(n.notes) + '&rdquo;</div>' : "") +
       '<div class="actions">' +
-        (isSafeUrl(n.trailerUrl) ? '<a class="trailer-link" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer">&#9654; Watch trailer</a>' : '') +
+        '<a class="trailer-link" href="' + esc(trailerFor(n).url) + '" target="_blank" rel="noopener noreferrer">&#9654; Watch trailer</a>' +
         '<button class="btn ghost small" data-action="edit" data-id="' + n.id + '">Edit</button>' +
         '<button class="btn ghost small" data-action="del" data-id="' + n.id + '">' + (state.pendingDelete === n.id ? "Confirm delete?" : "Remove") + '</button>' +
       '</div>' +
@@ -694,9 +776,9 @@
         return present;
       }),
       directors: tally(items, function(n){ return [n.director]; }),
-      // Genres and directors come from TMDB, so this counts how many of the
-      // month's films that source has actually answered for.
-      enriched: items.filter(function(n){ return n.extraState === "found"; }).length
+      // Genres and directors come from Wikidata, so this counts how many of
+      // the month's films it has actually answered for.
+      enriched: items.filter(function(n){ return n.factsState === "found"; }).length
     };
   }
 
@@ -726,6 +808,7 @@
     state.editDraft = null;
     state.editError = "";
     state.statsKey = null;
+    state.detailsId = null;
     renderModal();
   }
 
@@ -768,10 +851,10 @@
     }
     modalHost.classList.add("open");
     document.body.classList.add("modal-open");
-    if (state.modalView === "stats"){
+    if (state.modalView === "stats" || state.modalView === "details"){
       modalHost.innerHTML =
         '<div class="modal-backdrop" data-action="close-edit"></div>' +
-        renderStatsModal();
+        (state.modalView === "stats" ? renderStatsModal() : renderDetailsModal());
       bindModal();
       return;
     }
@@ -807,6 +890,56 @@
     bindModal();
   }
 
+  function openDetails(id){
+    if (!liveNight(id)) return;
+    state.modalView = "details";
+    state.detailsId = id;
+    renderModal();
+  }
+
+  function renderDetailsModal(){
+    var n = liveNight(state.detailsId);
+    if (!n){
+      return '<div class="modal-card"><div class="modal-head"><h2>Screening</h2>' +
+        '<button class="add-card-close" data-action="close-edit" title="Close">&times;</button></div>' +
+        '<p class="panel-empty">That screening is no longer in the log.</p></div>';
+    }
+    var attendees = n.attendees || [];
+    return '<div class="modal-card details-card">' +
+      '<div class="modal-head">' +
+        '<div class="details-head">' +
+          '<div class="details-art" style="' + artBg(n) + '"></div>' +
+          '<div>' +
+            '<h2>' + esc(n.movie) + '</h2>' +
+            metaLine(n) +
+            '<div class="details-when">' + esc(fmtDate(n.date)) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<button class="add-card-close" data-action="close-edit" title="Close">&times;</button>' +
+      '</div>' +
+
+      '<div class="details-block">' +
+        '<div class="micro">Picked by</div>' +
+        '<div class="chips">' + personHtml(n.pickedBy, 20) + '</div>' +
+      '</div>' +
+
+      '<div class="details-block">' +
+        '<div class="micro">On the couch</div>' +
+        (attendees.length
+          ? '<div class="chips">' + attendeeChips(attendees) + '</div>'
+          : '<p class="panel-empty">No guests recorded.</p>') +
+      '</div>' +
+
+      (n.notes ? '<div class="details-block"><div class="micro">Notes</div>' +
+        '<div class="notes">&ldquo;' + esc(n.notes) + '&rdquo;</div></div>' : "") +
+
+      '<div class="modal-actions">' +
+        '<a class="btn ghost small" href="' + esc(trailerFor(n).url) + '" target="_blank" rel="noopener noreferrer">&#9654; Trailer</a>' +
+        '<button type="button" class="btn small" data-action="edit-from-details" data-id="' + n.id + '">Edit</button>' +
+      '</div>' +
+    '</div>';
+  }
+
   function barList(pairs, limit){
     var rows = pairs.slice(0, limit || 6);
     if (!rows.length) return "";
@@ -836,12 +969,10 @@
     }
 
     var st = monthStats(group.items);
-    // Genres and directors need a TMDB key; posters, years and therefore
-    // decades don't. Each panel says which of the two is holding it up.
     var missing = st.count - st.enriched;
-    var tmdbNote = !tmdbKey()
-      ? "Add a TMDB key in config.js to see this."
-      : (missing ? missing + " of " + st.count + " still waiting on a TMDB match." : "Nothing to show yet.");
+    var genreNote = missing
+      ? missing + " of " + st.count + " not matched on Wikidata yet."
+      : "No genres listed for this month's films.";
     var yearNote = "No release years found for this month yet.";
 
     return '<div class="modal-card stats-card">' +
@@ -861,7 +992,7 @@
       '</div>' +
 
       '<div class="stat-grid">' +
-        statPanel("Genres", barList(st.genres, 6), tmdbNote) +
+        statPanel("Genres", barList(st.genres, 6), genreNote) +
         statPanel("Decades", barList(st.decades, 6), yearNote) +
         statPanel("Who picked", barList(st.curators, 6), "No picks recorded.") +
         statPanel("Regulars", barList(st.guests, 6), "No guests recorded.") +
@@ -882,6 +1013,12 @@
     modalHost.querySelectorAll('[data-action="close-edit"]').forEach(function(el){
       el.addEventListener("click", closeModal);
     });
+    var jump = modalHost.querySelector('[data-action="edit-from-details"]');
+    if (jump){
+      jump.addEventListener("click", function(){
+        openEdit(jump.getAttribute("data-id"));
+      });
+    }
     var f = modalHost.querySelector("#editForm");
     if (!f) return;
     f.addEventListener("input", function(e){
@@ -932,9 +1069,7 @@
   }
 
   function renderPoster(n){
-    var attendees = n.attendees || [];
-
-    return '<div class="poster">' +
+    return '<div class="poster" data-action="details" data-id="' + n.id + '">' +
       '<div class="art" style="' + artBg(n) + '"></div>' +
       '<div class="poster-fade"></div>' +
       '<button class="poster-edit" data-action="edit" data-id="' + n.id + '" title="Edit this screening"><span></span><span></span><span></span></button>' +
@@ -943,8 +1078,6 @@
         '<h3>' + esc(n.movie) + '</h3>' +
         metaLine(n, true) +
         '<div class="credit-line">Selected by ' + personHtml(n.pickedBy, 18) + '</div>' +
-        (attendees.length ? '<div class="chips">' + attendeeChips(attendees, 3) + '</div>' : "") +
-        (isSafeUrl(n.trailerUrl) ? '<a class="trailer-link" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer">&#9654; Trailer</a>' : "") +
       '</div>' +
     '</div>';
   }
@@ -1023,6 +1156,13 @@
       el.addEventListener("click", function(e){
         e.stopPropagation(); // the thumb underneath also handles clicks
         openEdit(el.getAttribute("data-id"));
+      });
+    });
+    app.querySelectorAll('[data-action="details"]').forEach(function(el){
+      el.addEventListener("click", function(e){
+        // The edit button and the trailer link sit on top of the poster.
+        if (e.target.closest('[data-action="edit"], a')) return;
+        openDetails(el.getAttribute("data-id"));
       });
     });
     app.querySelectorAll('[data-action="month-stats"]').forEach(function(el){

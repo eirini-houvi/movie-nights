@@ -20,30 +20,35 @@ shows a warning at the top; nothing is saved.
 
 ## Movie posters and details
 
-Every logged title is looked up automatically — no setup, no account:
+Every logged title is looked up automatically. Nothing to configure:
 
-- **Posters and release years** come from IMDb's public suggestion endpoint,
-  the one behind IMDb's own search box. No key, nothing to configure.
-- **Genres, director and a trailer link** come from TMDB, which *does* need
-  a free key. Without one, everything else still works — those three fields
-  just stay empty.
+- **Poster and release year** — IMDb's public suggestion endpoint, the one
+  behind IMDb's own search box. No key, no signup.
+- **Genres and director** — Wikidata, which indexes films by their IMDb id,
+  so the id from the first lookup is enough to ask for the rest. Also
+  keyless.
+- **Trailer** — the button is always there. It opens an exact link when
+  there is one (pasted in by hand, or fetched from TMDB if you've set a
+  key) and otherwise a YouTube search for the film, which lands on the
+  trailer in practice.
 
-To add the TMDB key:
+Every lookup is best-effort and remembers its own outcome, so one source
+can succeed while another finds nothing. A title nothing recognises is
+marked "no match" and not asked about again; a failed request (offline,
+rate limit) is retried next time you load the page. Rename a movie and it
+is looked up again from scratch.
 
-1. Sign up at [themoviedb.org/signup](https://www.themoviedb.org/signup)
-2. Go to [Settings -> API](https://www.themoviedb.org/settings/api), request
-   a key, choose **Developer**, and fill in the short form
-3. Copy the value labelled **API Key (v3 auth)** into `config.js`
+### Optional: a TMDB key
 
-Both lookups are best-effort and remember their own outcome. A title neither
-source recognises is marked "no match" and not asked about again; a failed
-request (offline, rate limit, bad key) is retried next time you load the
-page. Rename a movie and it's looked up again from scratch.
+`config.js` takes a free [TMDB](https://www.themoviedb.org/settings/api)
+key. It is genuinely optional now — its only remaining job is turning the
+trailer button into a direct link instead of a YouTube search. Leave it
+empty and everything else works exactly the same.
 
-**On the key being public:** `config.js` ships to the browser, so anyone
-viewing the deployed site's source or the GitHub repo can read it. A TMDB
-v3 read key is designed to be used from client-side apps and can't spend
-money or change your account, but treat it as public rather than secret.
+Note that `config.js` ships to the browser, so a key there is readable by
+anyone viewing the deployed site or the repo. A TMDB v3 read key is meant
+for client-side use and can't spend money or change your account, but
+treat it as public rather than secret.
 
 ## Using it
 
@@ -54,8 +59,11 @@ money or change your account, but treat it as public rather than secret.
   for the title, date, who picked it, the guest list, trailer and notes.
 - **Up Next** — who picks and whose house, for the coming Monday.
 - **Month stats** — the Stats button on any month row breaks that month
-  down by genre, decade, who picked and who kept showing up.
-- **Recap** — the whole wall of posters, newest first.
+  down by genre, decade, who picked and who kept showing up. Whoever picked
+  a film counts as present that night, since nobody types their own name
+  into the guest list.
+- **Recap** — the whole wall of posters, newest first. Click one for the
+  full details: guests, notes and the trailer.
 
 ## Run it
 

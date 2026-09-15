@@ -238,7 +238,7 @@
 
   /* ---------- recap grid ---------- */
   .poster-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(160px,1fr)); gap:16px; }
-  .poster{
+  .poster{ cursor:pointer;
     position:relative; border-radius:var(--r-md); overflow:hidden; box-shadow:var(--shadow);
     aspect-ratio:2/3; display:flex; flex-direction:column; justify-content:flex-end; color:#fff;
     transition: transform .15s ease; cursor:default;
@@ -332,6 +332,20 @@
   .modal-head h2{ font-size:17px; }
   .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 
+  /* ---------- screening details dialog ---------- */
+  .details-head{ display:flex; gap:14px; align-items:flex-start; min-width:0; }
+  .details-art{
+    width:78px; aspect-ratio:2/3; flex-shrink:0; border-radius:var(--r-sm);
+    background-size:cover; background-position:center;
+  }
+  .details-head h2{ font-size:18px; line-height:1.2; margin-bottom:4px; }
+  .details-when{ font-size:12.5px; color:var(--text-muted); }
+  .details-block{ margin-top:16px; }
+  .details-block .micro{ margin-bottom:8px; }
+  .details-block .chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .details-card .modal-actions{ align-items:center; }
+  .details-card .trailer-link{ text-decoration:none; }
+
   /* ---------- month stats dialog ---------- */
   .stats-card .modal-head .add-sub{ margin:2px 0 0; }
   .stat-tiles{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:16px; }
@@ -366,6 +380,7 @@
   @supports (corner-shape: squircle){
     .card,
     .modal-card,
+    .details-art,
     .stat-tile,
     .thumb,
     .poster,
