@@ -65,7 +65,7 @@
   }
   .cover-img{
     position:absolute; inset:0; background-size:cover; background-position:center 42%;
-    background-image:url('images/cover-banner.jpg');
+    background-image:url('images/cover-banner.jpg?v=3');
   }
   /* One gradient does both jobs: darkens the top so the nav stays legible
      over the photo, and dissolves the bottom edge into the page. */

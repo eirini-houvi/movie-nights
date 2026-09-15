@@ -150,12 +150,12 @@
   // Real photo avatars for people we already have a picture of. Everyone
   // else gets a generated colour + initials avatar until they add their own.
   var AVATAR_PHOTOS = {
-    "eirini":  "images/avatar-eirini.png",
-    "elianna": "images/avatar-elianna.png",
-    "guney":   "images/avatar-guney.png",
-    "neoklis": "images/avatar-neoklis.png",
-    "maria":   "images/avatar-maria.png",
-    "maria a.": "images/avatar-maria.png"
+    "eirini":  "images/avatar-eirini.png?v=3",
+    "elianna": "images/avatar-elianna.png?v=3",
+    "guney":   "images/avatar-guney.png?v=3",
+    "neoklis": "images/avatar-neoklis.png?v=3",
+    "maria":   "images/avatar-maria.png?v=3",
+    "maria a.": "images/avatar-maria.png?v=3"
   };
   function avatarHtml(name, size){
     size = size || 26;
