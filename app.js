@@ -149,7 +149,10 @@
   // Real photo avatars for people we already have a picture of. Everyone
   // else gets a generated colour + initials avatar until they add their own.
   var AVATAR_PHOTOS = {
-    "eirini": "images/avatar-eirini.jpg"
+    "eirini":  "images/avatar-eirini.jpg",
+    "elianna": "images/avatar-elianna.jpg",
+    "guney":   "images/avatar-guney.jpg",
+    "neoklis": "images/avatar-neoklis.jpg"
   };
   function avatarHtml(name, size){
     size = size || 26;
@@ -159,7 +162,10 @@
       return '<span class="avatar avatar-empty" style="' + style + '"></span>';
     }
     if (AVATAR_PHOTOS[key]){
-      return '<span class="avatar" style="' + style + 'background-image:url(\'' + AVATAR_PHOTOS[key] + '\')" title="' + esc(name) + '"></span>';
+      // The colour sits behind the photo, so a file that hasn't been added
+      // yet degrades to that person's plain colour instead of a blank hole.
+      return '<span class="avatar" style="' + style + 'background-color:' + avatarColor(key) +
+             ';background-image:url(\'' + AVATAR_PHOTOS[key] + '\')" title="' + esc(name) + '"></span>';
     }
     return '<span class="avatar" style="' + style + 'background:' + avatarColor(key) + '" title="' + esc(name) + '">' + esc(initials(name)) + '</span>';
   }
@@ -561,7 +567,7 @@
     return '<div class="card now-card">' +
       '<div class="now-cover"><div class="art" style="' + artBg(n) + '"></div></div>' +
       '<div class="now-body">' +
-        '<div class="eyebrow">Now Watching</div>' +
+        '<div class="eyebrow">Latest Watch</div>' +
         '<h2>' + esc(n.movie) + '</h2>' +
         metaLine(n) +
         '<div class="meta">Selected by ' + personHtml(n.pickedBy, 20) + ' <span class="sep">&middot;</span> ' + esc(fmtDate(n.date)) + '</div>' +

@@ -65,7 +65,10 @@
   }
   .cover-img{
     position:absolute; inset:0; background-size:cover; background-position:center 42%;
-    background-image:url('images/cover-banner.jpg');
+    /* The portrait crop paints on top when it's present; the original wide
+       crop stays underneath as the fallback, so a missing file is invisible
+       rather than a black band. */
+    background-image:url('images/cover-portrait.jpg'), url('images/cover-banner.jpg');
   }
   /* One gradient does both jobs: darkens the top so the nav stays legible
      over the photo, and dissolves the bottom edge into the page. */
