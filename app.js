@@ -9,7 +9,7 @@
     storageError: "",
     formError: "",
     draft: null,
-    nextUpDraft: { pickedBy:"", house:"" },
+    nextUpDraft: { date:"", pickedBy:"" },
     showAddForm: false,
     modalView: null,   // null | "edit" | "stats"
     editId: null,      // night being edited in the modal
@@ -152,7 +152,9 @@
     "eirini":  "images/avatar-eirini.png",
     "elianna": "images/avatar-elianna.png",
     "guney":   "images/avatar-guney.png",
-    "neoklis": "images/avatar-neoklis.png"
+    "neoklis": "images/avatar-neoklis.png",
+    "maria":   "images/avatar-maria.png",
+    "maria a.": "images/avatar-maria.png"
   };
   function avatarHtml(name, size){
     size = size || 26;
@@ -189,7 +191,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         nights: state.nights,
-        nextUp: { pickedBy: state.nextUpDraft.pickedBy, house: state.nextUpDraft.house }
+        nextUp: { date: state.nextUpDraft.date, pickedBy: state.nextUpDraft.pickedBy }
       }));
       state.storageError = "";
     } catch (e){
@@ -226,8 +228,10 @@
       });
     }
     if (data && data.nextUp){
+      // The second field used to be whose place it was at; anything saved
+      // under that key is simply dropped.
       state.nextUpDraft.pickedBy = data.nextUp.pickedBy || "";
-      state.nextUpDraft.house = data.nextUp.house || "";
+      state.nextUpDraft.date = data.nextUp.date || "";
     }
     // Written only after every field is back in state — persisting mid-load
     // would save the half-restored version over the real one.
@@ -519,10 +523,9 @@
 
     if (!featured){
       var picked = state.nextUpDraft.pickedBy.trim();
-      var house = state.nextUpDraft.house.trim();
-      var emptyMsg = 'No screenings logged yet &mdash; <strong>' + esc(fmtDate(nextMonday())) + '</strong> is up next';
+      var emptyMsg = 'No screenings logged yet &mdash; <strong>' +
+        esc(fmtDate(state.nextUpDraft.date || nextMonday())) + '</strong> is up next';
       if (picked) emptyMsg += ', ' + esc(picked) + '&#39;s pick';
-      if (house) emptyMsg += ' at ' + esc(house);
       emptyMsg += '.';
       app.innerHTML = statsHtml + nextUpHtml + addBlockHtml +
         '<div class="card empty">' +
@@ -559,18 +562,18 @@
 
   function renderNextUp(){
     var picked = state.nextUpDraft.pickedBy;
-    var house = state.nextUpDraft.house;
+    var when = state.nextUpDraft.date || nextMonday();
     return '<div class="card nextup-card">' +
       '<div class="nextup-top">' +
         '<span class="micro">Up Next</span>' +
-        '<span class="nextup-when tnum">' + esc(fmtDate(nextMonday())) + '</span>' +
+        '<span class="nextup-when tnum">' + esc(fmtDate(when)) + '</span>' +
       '</div>' +
       '<div class="nextup-fields">' +
-        '<label class="nextup-field">' + avatarHtml(picked, 22) +
-          '<input type="text" data-nextup="pickedBy" value="' + esc(picked) + '" placeholder="Whose turn to pick?">' +
-        '</label>' +
         '<label class="nextup-field nextup-field-plain">' +
-          '<input type="text" data-nextup="house" value="' + esc(house) + '" placeholder="Whose house?">' +
+          '<input type="date" data-nextup="date" value="' + esc(when) + '">' +
+        '</label>' +
+        '<label class="nextup-field">' + avatarHtml(picked, 22) +
+          '<input type="text" data-nextup="pickedBy" value="' + esc(picked) + '" placeholder="Who&#39;s picking?">' +
         '</label>' +
       '</div>' +
     '</div>';
@@ -679,7 +682,17 @@
       genres: tally(items, function(n){ return n.genres || []; }),
       decades: tally(items, function(n){ return [decadeOf(n.year)]; }),
       curators: tally(items, function(n){ return [n.pickedBy]; }),
-      guests: tally(items, function(n){ return n.attendees || []; }),
+      // Whoever picked the film was obviously there, so they count towards
+      // the night even though nobody types their own name into the guest
+      // list. Deduped per night, so being in both lists is still one turn.
+      guests: tally(items, function(n){
+        var present = (n.attendees || []).slice();
+        if (n.pickedBy && present.map(function(a){ return String(a).trim().toLowerCase(); })
+              .indexOf(String(n.pickedBy).trim().toLowerCase()) === -1){
+          present.push(n.pickedBy);
+        }
+        return present;
+      }),
       directors: tally(items, function(n){ return [n.director]; }),
       // Genres and directors come from TMDB, so this counts how many of the
       // month's films that source has actually answered for.
@@ -848,7 +861,7 @@
       '</div>' +
 
       '<div class="stat-grid">' +
-        statPanel("Top genres", barList(st.genres, 6), tmdbNote) +
+        statPanel("Genres", barList(st.genres, 6), tmdbNote) +
         statPanel("Decades", barList(st.decades, 6), yearNote) +
         statPanel("Who picked", barList(st.curators, 6), "No picks recorded.") +
         statPanel("Regulars", barList(st.guests, 6), "No guests recorded.") +
@@ -987,9 +1000,20 @@
       var field = input.getAttribute("data-nextup");
       input.addEventListener("input", function(e){
         state.nextUpDraft[field] = e.target.value;
+        // Swapped in place rather than through render(), which would take
+        // the caret out of the field being typed into.
+        if (field === "pickedBy"){
+          var av = input.parentNode.querySelector(".avatar");
+          if (av) av.outerHTML = avatarHtml(e.target.value, 22);
+        }
       });
       input.addEventListener("blur", function(e){
         saveNextUp(field, e.target.value);
+      });
+      // The calendar popup can commit a date without ever blurring the field.
+      input.addEventListener("change", function(e){
+        saveNextUp(field, e.target.value);
+        if (field === "date") render();
       });
     });
   }
