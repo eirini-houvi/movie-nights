@@ -3,14 +3,12 @@
 
   var state = {
     view: "log",
-    recapSort: "chrono",
     selectedId: null,
     pendingDelete: null,
     nights: [],
     storageError: "",
     formError: "",
     draft: null,
-    rateDraft: {},
     nextUpDraft: { pickedBy:"", house:"" },
     showAddForm: false,
     modalView: null,   // null | "edit" | "stats"
@@ -151,10 +149,10 @@
   // Real photo avatars for people we already have a picture of. Everyone
   // else gets a generated colour + initials avatar until they add their own.
   var AVATAR_PHOTOS = {
-    "eirini":  "images/avatar-eirini.jpg",
-    "elianna": "images/avatar-elianna.jpg",
-    "guney":   "images/avatar-guney.jpg",
-    "neoklis": "images/avatar-neoklis.jpg"
+    "eirini":  "images/avatar-eirini.png",
+    "elianna": "images/avatar-elianna.png",
+    "guney":   "images/avatar-guney.png",
+    "neoklis": "images/avatar-neoklis.png"
   };
   function avatarHtml(name, size){
     size = size || 26;
@@ -170,26 +168,6 @@
              ';background-image:url(\'' + AVATAR_PHOTOS[key] + '\')" title="' + esc(name) + '"></span>';
     }
     return '<span class="avatar" style="' + style + 'background:' + avatarColor(key) + '" title="' + esc(name) + '">' + esc(initials(name)) + '</span>';
-  }
-
-  function avgRating(n){
-    if (!n.ratings || !n.ratings.length) return null;
-    var sum = 0;
-    n.ratings.forEach(function(r){ sum += Number(r.score) || 0; });
-    return sum / n.ratings.length;
-  }
-
-  function ratingTier(avg){
-    if (avg === null) return "none";
-    if (avg >= 7.5) return "good";
-    if (avg >= 5) return "mid";
-    return "low";
-  }
-
-  function ratingTag(avg){
-    var tier = ratingTier(avg);
-    var label = avg === null ? "Unrated" : avg.toFixed(1);
-    return '<span class="rating-tag tier-' + tier + '">' + (avg !== null ? '<span class="star">&#9733;</span>' : '') + label + '</span>';
   }
 
   function isSafeUrl(u){
@@ -283,8 +261,10 @@
       n.year = "";
       n.genres = [];
       n.director = "";
+      n.imdbId = "";
       n.tmdbId = null;
       n.metaState = "";
+      n.extraState = "";
     }
     persist();
     render();
@@ -300,23 +280,40 @@
     persist();
   }
 
-  // ---------- movie metadata (TMDB) ----------
-  // Optional and best-effort: with no key, a dead network, or a title TMDB
-  // doesn't recognise, a movie simply keeps its generated gradient and
-  // whatever the person typed in by hand.
-  // A night carries `metaState` so we remember what already happened:
+  // ---------- movie metadata ----------
+  // Two sources, both best-effort:
+  //
+  //   IMDb  — the public suggestion endpoint behind IMDb's own search box.
+  //           No key, no signup, CORS-open. Gives the poster and the
+  //           release year, which is all the cards need. This runs for
+  //           everyone, always.
+  //   TMDB  — only if a key is set in config.js. Adds the genres, the
+  //           director and a trailer link, which IMDb doesn't hand out.
+  //
+  // Each source records its own outcome so one can succeed while the other
+  // never runs:
   //   ""        never looked up
   //   "found"   details were merged in
-  //   "missing" TMDB had no match — don't ask again for this title
-  // A failed *request* (offline, bad key, rate limit) leaves metaState
-  // untouched, so it's retried the next time the page loads.
+  //   "missing" the source had no match — don't ask again for this title
+  // A failed *request* (offline, rate limit, bad key) leaves the state
+  // unset, so it's retried on the next page load.
+  var IMDB_SUGGEST = "https://v2.sg.media-imdb.com/suggestion/p/";
   var TMDB_API = "https://api.themoviedb.org/3";
   var TMDB_IMAGE = "https://image.tmdb.org/t/p/w500";
-  var metaPending = {}; // night id -> true, so one lookup runs at a time
+  var metaPending = {};  // night id -> true, so one lookup runs at a time
+  var extraPending = {};
 
   function tmdbKey(){
     var k = typeof window !== "undefined" && window.TMDB_API_KEY;
     return typeof k === "string" && k.trim() ? k.trim() : "";
+  }
+
+  // IMDb serves its artwork off Amazon with the size baked into the
+  // filename, so asking for a 400px-wide copy avoids pulling a 1280px
+  // original into a 168px card.
+  function imdbPoster(url){
+    if (typeof url !== "string" || !/^https:\/\/m\.media-amazon\.com\/images\//.test(url)) return "";
+    return url.replace(/\._V1_.*$/, "._V1_QL75_UX400_.jpg");
   }
 
   function posterUrlFrom(path){
@@ -346,6 +343,52 @@
     return "";
   }
 
+  function liveNight(id){
+    return state.nights.find(function(x){ return x.id === id; }) || null;
+  }
+
+  // ----- poster + year, from IMDb -----
+  function fetchPoster(night){
+    if (!night || !night.movie) return;
+    if (night.metaState === "found" || night.metaState === "missing") return;
+    if (metaPending[night.id]) return;
+    metaPending[night.id] = true;
+
+    fetch(IMDB_SUGGEST + encodeURIComponent(night.movie.toLowerCase()) + ".json")
+      .then(function(res){
+        if (!res.ok) throw new Error("imdb " + res.status);
+        return res.json();
+      })
+      .then(function(data){
+        delete metaPending[night.id];
+        var live = liveNight(night.id);
+        if (!live) return; // removed while the request was in flight
+        // The endpoint answers with people and TV as well, so take the first
+        // entry that is a film and actually has artwork.
+        var hits = (data && data.d) || [];
+        var hit = null;
+        for (var i = 0; i < hits.length; i++){
+          var h = hits[i];
+          if (h.qid && h.qid.indexOf("movie") !== 0 && h.qid !== "tvMovie") continue;
+          if (imdbPoster((h.i || {}).imageUrl)){ hit = h; break; }
+        }
+        if (!hit){
+          live.metaState = "missing";
+        } else {
+          live.imdbId = hit.id || "";
+          live.posterUrl = imdbPoster((hit.i || {}).imageUrl);
+          live.year = hit.y ? String(hit.y) : "";
+          live.metaState = "found";
+        }
+        persist();
+        render();
+      })
+      .catch(function(){
+        delete metaPending[night.id];
+      });
+  }
+
+  // ----- genres, director, trailer: TMDB, only with a key -----
   function tmdbFetch(path, params){
     var qs = "api_key=" + encodeURIComponent(tmdbKey());
     Object.keys(params || {}).forEach(function(k){
@@ -357,68 +400,66 @@
     });
   }
 
-  function fetchMeta(night){
+  function fetchExtras(night){
     if (!tmdbKey() || !night || !night.movie) return;
-    if (night.metaState === "found" || night.metaState === "missing") return;
-    if (metaPending[night.id]) return;
-    metaPending[night.id] = true;
+    if (night.extraState === "found" || night.extraState === "missing") return;
+    if (extraPending[night.id]) return;
+    extraPending[night.id] = true;
 
     tmdbFetch("/search/movie", { include_adult: "false", query: night.movie })
       .then(function(data){
         var results = (data && data.results) || [];
-        // Prefer the first match that actually has artwork — the top result
-        // is occasionally an obscure entry with no poster on file.
-        var hit = null;
-        for (var i = 0; i < results.length; i++){
-          if (posterUrlFrom(results[i].poster_path)){ hit = results[i]; break; }
-        }
-        if (!hit) hit = results[0];
+        var hit = results[0];
         if (!hit || !hit.id){
-          applyMeta(night.id, null);
+          applyExtras(night.id, null);
           return null;
         }
         // One extra call brings back genres, the director and the trailer.
         return tmdbFetch("/movie/" + encodeURIComponent(hit.id), {
           append_to_response: "videos,credits"
         }).then(function(details){
-          applyMeta(night.id, details || hit);
+          applyExtras(night.id, details);
         });
       })
       .catch(function(){
-        // Offline, bad key, rate-limited: stay quiet and leave metaState
-        // unset so the next page load tries again.
-        delete metaPending[night.id];
+        delete extraPending[night.id];
       });
   }
 
-  function applyMeta(id, details){
-    delete metaPending[id];
-    var live = state.nights.find(function(x){ return x.id === id; });
-    if (!live) return; // removed while the request was in flight
+  function applyExtras(id, details){
+    delete extraPending[id];
+    var live = liveNight(id);
+    if (!live) return;
     if (!details){
-      live.metaState = "missing";
+      live.extraState = "missing";
       persist();
       render();
       return;
     }
     live.tmdbId = details.id || null;
-    live.posterUrl = posterUrlFrom(details.poster_path);
-    live.year = String(details.release_date || "").slice(0, 4);
     live.genres = ((details.genres || []).map(function(g){ return g.name; })
                    .filter(Boolean)).slice(0, 3);
     live.director = directorFrom(details.credits);
+    // IMDb is trusted for the year, but fill it in if IMDb came up empty.
+    if (!live.year) live.year = String(details.release_date || "").slice(0, 4);
+    // A poster only if IMDb didn't already supply one.
+    if (!live.posterUrl) live.posterUrl = posterUrlFrom(details.poster_path);
     // A trailer someone pasted in by hand always wins over the fetched one.
     if (!isSafeUrl(live.trailerUrl)){
       var t = trailerFrom(details.videos);
       if (t) live.trailerUrl = t;
     }
-    live.metaState = "found";
+    live.extraState = "found";
     persist();
     render();
   }
 
+  function fetchMeta(night){
+    fetchPoster(night);
+    fetchExtras(night);
+  }
+
   function fetchMissingMeta(){
-    if (!tmdbKey()) return;
     state.nights.forEach(function(n){ fetchMeta(n); });
   }
 
@@ -426,18 +467,10 @@
   function renderStats(){
     var n = state.nights;
     var count = n.length;
-    var rated = n.filter(function(x){ return x.ratings && x.ratings.length; });
-    var overall = null;
-    if (rated.length){
-      var s = 0, c = 0;
-      rated.forEach(function(x){ x.ratings.forEach(function(r){ s += Number(r.score)||0; c++; }); });
-      overall = c ? (s/c) : null;
-    }
     var pickers = {};
     n.forEach(function(x){ if (x.pickedBy) pickers[x.pickedBy.trim().toLowerCase()] = 1; });
     return '<div class="stats-row">' +
       '<span class="stat-chip"><b class="tnum">' + count + '</b> screenings</span>' +
-      '<span class="stat-chip"><b class="tnum">' + (overall !== null ? overall.toFixed(1) : "&mdash;") + '</b> avg rating</span>' +
       '<span class="stat-chip"><b class="tnum">' + Object.keys(pickers).length + '</b> curators</span>' +
     '</div>';
   }
@@ -545,9 +578,9 @@
 
   // "1993 &middot; Drama, Romance &middot; Dir. John Singleton" — each piece only
   // appears once TMDB has actually supplied it.
-  function metaLine(n){
+  function metaLine(n, skipYear){
     var bits = [];
-    if (n.year) bits.push('<span class="tnum">' + esc(n.year) + '</span>');
+    if (n.year && !skipYear) bits.push('<span class="tnum">' + esc(n.year) + '</span>');
     if (n.genres && n.genres.length) bits.push(esc(n.genres.join(", ")));
     if (n.director) bits.push("Dir. " + esc(n.director));
     if (!bits.length) return "";
@@ -569,7 +602,6 @@
   }
 
   function renderNowCard(n){
-    var avg = avgRating(n);
     var attendees = n.attendees || [];
     return '<div class="card now-card">' +
       '<div class="now-cover"><div class="art" style="' + artBg(n) + '"></div></div>' +
@@ -581,7 +613,6 @@
         (attendees.length ? '<div class="chips" style="margin-bottom:8px;">' + attendeeChips(attendees) + '</div>' : "") +
         '<div class="now-actions">' +
           (isSafeUrl(n.trailerUrl) ? '<a class="btn-play" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer"><span class="tri"></span>Trailer</a>' : '<span class="btn-ghost-pill">No trailer yet</span>') +
-          ratingTag(avg) +
         '</div>' +
       '</div>' +
     '</div>';
@@ -599,14 +630,7 @@
   }
 
   function renderDetail(n, num){
-    var avg = avgRating(n);
     var attendees = n.attendees || [];
-    var ratings = n.ratings || [];
-    var ratingChips = ratings.map(function(r, idx){
-      return '<span class="rate-chip">' + avatarHtml(r.name, 16) + esc(r.name) + ' <span class="tnum">' + Number(r.score).toFixed(1) + '</span>' +
-        '<button data-action="rmrate" data-id="' + n.id + '" data-idx="' + idx + '" title="Remove rating">&times;</button></span>';
-    }).join("");
-    var rd = state.rateDraft[n.id] || { name:"", score:"" };
 
     return '<div class="card detail" data-id="' + n.id + '">' +
       '<button class="detail-close" data-action="close-detail" title="Close">&times;</button>' +
@@ -616,7 +640,6 @@
           metaLine(n) +
           '<div class="date">' + esc(fmtDate(n.date)) + ' <span class="sep">&middot;</span> picked by ' + personHtml(n.pickedBy, 18) + '</div>' +
         '</div>' +
-        ratingTag(avg) +
       '</div>' +
       (attendees.length ? '<div class="chips">' + attendeeChips(attendees) + '</div>' : "") +
       (n.notes ? '<div class="notes">&ldquo;' + esc(n.notes) + '&rdquo;</div>' : "") +
@@ -624,15 +647,6 @@
         (isSafeUrl(n.trailerUrl) ? '<a class="trailer-link" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer">&#9654; Watch trailer</a>' : '') +
         '<button class="btn ghost small" data-action="edit" data-id="' + n.id + '">Edit</button>' +
         '<button class="btn ghost small" data-action="del" data-id="' + n.id + '">' + (state.pendingDelete === n.id ? "Confirm delete?" : "Remove") + '</button>' +
-      '</div>' +
-      '<div class="rate-panel">' +
-        '<div class="micro" style="margin-bottom:8px;">Ratings</div>' +
-        (ratingChips ? '<div class="ratings-list">' + ratingChips + '</div>' : '<div class="sync-note" style="padding:0;margin:0 0 10px;">No ratings yet.</div>') +
-        '<form class="rate-form" data-action="rate-form" data-id="' + n.id + '">' +
-          '<div class="field"><label>Name</label><input type="text" name="name" value="' + esc(rd.name) + '" placeholder="Your name"></div>' +
-          '<div class="field score"><label>Score</label><input type="number" name="score" min="1" max="10" step="0.1" value="' + esc(rd.score) + '" placeholder="1&ndash;10"></div>' +
-          '<button type="submit" class="btn small">Add rating</button>' +
-        '</form>' +
       '</div>' +
     '</div>';
   }
@@ -660,35 +674,16 @@
   }
 
   function monthStats(items){
-    var rated = items.filter(function(n){ return n.ratings && n.ratings.length; });
-    var scores = [];
-    items.forEach(function(n){
-      (n.ratings || []).forEach(function(r){
-        var v = Number(r.score);
-        if (!isNaN(v)) scores.push(v);
-      });
-    });
-    var avg = scores.length ? scores.reduce(function(a, b){ return a + b; }, 0) / scores.length : null;
-
-    var best = null;
-    rated.forEach(function(n){
-      var v = avgRating(n);
-      if (v !== null && (!best || v > best.score)) best = { movie: n.movie, score: v };
-    });
-
     return {
       count: items.length,
-      ratedCount: rated.length,
-      avg: avg,
-      best: best,
       genres: tally(items, function(n){ return n.genres || []; }),
       decades: tally(items, function(n){ return [decadeOf(n.year)]; }),
       curators: tally(items, function(n){ return [n.pickedBy]; }),
       guests: tally(items, function(n){ return n.attendees || []; }),
       directors: tally(items, function(n){ return [n.director]; }),
-      // How much of this month TMDB has actually filled in, which is what
-      // decides whether the genre and decade panels can say anything.
-      enriched: items.filter(function(n){ return n.metaState === "found"; }).length
+      // Genres and directors come from TMDB, so this counts how many of the
+      // month's films that source has actually answered for.
+      enriched: items.filter(function(n){ return n.extraState === "found"; }).length
     };
   }
 
@@ -828,41 +823,33 @@
     }
 
     var st = monthStats(group.items);
-    // Genres, decades and directors all come from TMDB; without a key there
-    // is nothing to compute, and saying so beats three empty panels.
-    var needsKey = !tmdbKey() && !st.enriched;
+    // Genres and directors need a TMDB key; posters, years and therefore
+    // decades don't. Each panel says which of the two is holding it up.
     var missing = st.count - st.enriched;
-    var metaNote = needsKey
+    var tmdbNote = !tmdbKey()
       ? "Add a TMDB key in config.js to see this."
       : (missing ? missing + " of " + st.count + " still waiting on a TMDB match." : "Nothing to show yet.");
+    var yearNote = "No release years found for this month yet.";
 
     return '<div class="modal-card stats-card">' +
       '<div class="modal-head">' +
         '<div>' +
           '<h2>' + esc(group.label) + '</h2>' +
-          '<p class="add-sub">' + st.count + ' screening' + (st.count===1?"":"s") +
-            (st.ratedCount ? ', ' + st.ratedCount + ' rated' : ', none rated yet') + '.</p>' +
+          '<p class="add-sub">' + st.count + ' screening' + (st.count===1?"":"s") + ' this month.</p>' +
         '</div>' +
         '<button class="add-card-close" data-action="close-edit" title="Close">&times;</button>' +
       '</div>' +
 
       '<div class="stat-tiles">' +
         '<div class="stat-tile"><b class="tnum">' + st.count + '</b><span>screenings</span></div>' +
-        '<div class="stat-tile"><b class="tnum">' + (st.avg !== null ? st.avg.toFixed(1) : "&mdash;") + '</b><span>avg rating</span></div>' +
+        '<div class="stat-tile"><b class="tnum">' + st.decades.length + '</b><span>decade' + (st.decades.length===1?"":"s") + '</span></div>' +
         '<div class="stat-tile"><b class="tnum">' + st.curators.length + '</b><span>curator' + (st.curators.length===1?"":"s") + '</span></div>' +
         '<div class="stat-tile"><b class="tnum">' + st.guests.length + '</b><span>people on the couch</span></div>' +
       '</div>' +
 
-      (st.best ? '<div class="stat-highlight">' +
-        '<span class="micro">Best of the month</span>' +
-        '<div><strong>' + esc(st.best.movie) + '</strong> ' +
-          '<span class="rating-tag tier-' + ratingTier(st.best.score) + '"><span class="star">&#9733;</span>' +
-          st.best.score.toFixed(1) + '</span></div>' +
-      '</div>' : "") +
-
       '<div class="stat-grid">' +
-        statPanel("Top genres", barList(st.genres, 6), metaNote) +
-        statPanel("Decades", barList(st.decades, 6), metaNote) +
+        statPanel("Top genres", barList(st.genres, 6), tmdbNote) +
+        statPanel("Decades", barList(st.decades, 6), yearNote) +
         statPanel("Who picked", barList(st.curators, 6), "No picks recorded.") +
         statPanel("Regulars", barList(st.guests, 6), "No guests recorded.") +
       '</div>' +
@@ -917,57 +904,33 @@
 
   // ---------- recap view ----------
   function renderRecap(){
-    var list = state.nights.slice();
-    if (state.recapSort === "top"){
-      list.sort(function(a,b){
-        var av = avgRating(a), bv = avgRating(b);
-        if (av === null && bv === null) return (a.date||"").localeCompare(b.date||"");
-        if (av === null) return 1;
-        if (bv === null) return -1;
-        return bv - av;
-      });
-    } else {
-      list.sort(function(a,b){ return (b.date||"").localeCompare(a.date||""); });
-    }
-
+    var list = state.nights.slice().sort(function(a, b){
+      return (b.date||"").localeCompare(a.date||"");
+    });
     var statsHtml = renderStats();
-    var controls =
-      '<div class="recap-controls">' +
-        '<div class="seg">' +
-          '<button data-sort="chrono" class="' + (state.recapSort==="chrono"?"on":"") + '">Diary</button>' +
-          '<button data-sort="top" class="' + (state.recapSort==="top"?"on":"") + '">Top Rated</button>' +
-        '</div>' +
-      '</div>';
 
     if (!list.length){
-      app.innerHTML = statsHtml + controls + '<div class="card empty"><h2>Nothing to screen yet</h2><p>Once you&rsquo;ve logged a few Monday nights, this is where the wall lives.</p></div>';
-      bindRecapControls();
+      app.innerHTML = statsHtml + '<div class="card empty"><h2>Nothing to screen yet</h2><p>Once you&rsquo;ve logged a few Monday nights, this is where the wall lives.</p></div>';
       return;
     }
 
-    var cards = list.map(function(n, i){ return renderPoster(n, state.recapSort==="top" ? i+1 : null); }).join("");
-    app.innerHTML = statsHtml + controls + '<div class="poster-grid">' + cards + '</div>';
-    bindRecapControls();
+    var cards = list.map(function(n){ return renderPoster(n); }).join("");
+    app.innerHTML = statsHtml + '<div class="poster-grid">' + cards + '</div>';
   }
 
-  function renderPoster(n, rank){
-    var avg = avgRating(n);
+  function renderPoster(n){
     var attendees = n.attendees || [];
-    var ratings = n.ratings || [];
-    var indRatings = ratings.map(function(r){ return esc(r.name) + " " + Number(r.score).toFixed(1); }).join(" &middot; ");
 
     return '<div class="poster">' +
       '<div class="art" style="' + artBg(n) + '"></div>' +
       '<div class="poster-fade"></div>' +
       '<button class="poster-edit" data-action="edit" data-id="' + n.id + '" title="Edit this screening"><span></span><span></span><span></span></button>' +
-      (rank ? '<span class="rank' + (rank===1?" gold":"") + '">#' + rank + '</span>' : "") +
-      '<span class="badge-slot">' + ratingTag(avg) + '</span>' +
+      (n.year ? '<span class="badge-slot"><span class="poster-year tnum">' + esc(n.year) + '</span></span>' : "") +
       '<div class="poster-content">' +
         '<h3>' + esc(n.movie) + '</h3>' +
-        metaLine(n) +
+        metaLine(n, true) +
         '<div class="credit-line">Selected by ' + personHtml(n.pickedBy, 18) + '</div>' +
         (attendees.length ? '<div class="chips">' + attendeeChips(attendees, 3) + '</div>' : "") +
-        (indRatings ? '<div class="ind-ratings">' + indRatings + '</div>' : "") +
         (isSafeUrl(n.trailerUrl) ? '<a class="trailer-link" href="' + esc(n.trailerUrl) + '" target="_blank" rel="noopener noreferrer">&#9654; Trailer</a>' : "") +
       '</div>' +
     '</div>';
@@ -1074,49 +1037,6 @@
           state.pendingDelete = id;
           render();
         }
-      });
-    });
-    app.querySelectorAll('[data-action="rmrate"]').forEach(function(btn){
-      btn.addEventListener("click", function(){
-        var id = btn.getAttribute("data-id");
-        var idx = Number(btn.getAttribute("data-idx"));
-        var n = state.nights.find(function(x){ return x.id === id; });
-        if (!n) return;
-        var next = (n.ratings||[]).slice();
-        next.splice(idx,1);
-        updateNight(id, { ratings: next });
-      });
-    });
-    app.querySelectorAll('[data-action="rate-form"]').forEach(function(form){
-      var id = form.getAttribute("data-id");
-      form.addEventListener("input", function(e){
-        var name = e.target.name;
-        if (!name) return;
-        if (!state.rateDraft[id]) state.rateDraft[id] = { name:"", score:"" };
-        state.rateDraft[id][name] = e.target.value;
-      });
-      form.addEventListener("submit", function(e){
-        e.preventDefault();
-        var rd = state.rateDraft[id] || {};
-        var name = String(rd.name||"").trim();
-        var score = Number(rd.score);
-        if (!name || isNaN(score)) return;
-        score = Math.max(1, Math.min(10, score));
-        var n = state.nights.find(function(x){ return x.id === id; });
-        if (!n) return;
-        var next = (n.ratings||[]).slice();
-        next.push({ name: name, score: score });
-        delete state.rateDraft[id];
-        updateNight(id, { ratings: next });
-      });
-    });
-  }
-
-  function bindRecapControls(){
-    app.querySelectorAll('[data-sort]').forEach(function(btn){
-      btn.addEventListener("click", function(){
-        state.recapSort = btn.getAttribute("data-sort");
-        render();
       });
     });
   }
