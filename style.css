@@ -12,7 +12,7 @@
     --good:#4CD170;
     --low:#EF4565;
     --shadow: 0 6px 20px rgba(0,0,0,.45);
-    --r-lg:24px; --r-md:18px; --r-sm:12px; --r-pill:999px;
+    --r-lg:28px; --r-md:22px; --r-sm:14px; --r-pill:999px;
   }
 
   *{box-sizing:border-box;}
@@ -32,12 +32,20 @@
   /* ---------- top nav ---------- */
   .nav{
     display:flex; align-items:center; justify-content:space-between; gap:16px;
-    padding: 16px 24px; position:sticky; top:0; z-index:20;
-    background: rgba(20,20,20,.9); backdrop-filter: blur(10px);
+    padding: 16px 24px; position:fixed; top:0; left:0; right:0; z-index:20;
+    background: transparent; backdrop-filter: none;
+    transition: background .25s ease, backdrop-filter .25s ease;
   }
-  .brand{ font-weight:800; font-size:18px; letter-spacing:-.01em; }
-  .brand .dot{ color:var(--accent); }
-  .segtabs{ display:flex; background:var(--surface-2); border-radius:var(--r-pill); padding:4px; gap:2px; }
+  /* Only once the cover has scrolled past does the nav need its own bar —
+     over the photo it rides on the cover's top scrim instead. */
+  .nav.scrolled{ background: rgba(20,20,20,.9); backdrop-filter: blur(10px); }
+  .brand{
+    font-weight:700; font-size:18px; letter-spacing:-.01em; text-transform:lowercase;
+    text-shadow: 0 1px 12px rgba(0,0,0,.55);
+  }
+  .nav.scrolled .brand{ text-shadow:none; }
+  .segtabs{ display:flex; background:rgba(38,38,38,.72); backdrop-filter:blur(8px); border-radius:var(--r-pill); padding:4px; gap:2px; }
+  .nav.scrolled .segtabs{ background:var(--surface-2); backdrop-filter:none; }
   .segtabs button{
     font-family:'Poppins'; font-weight:600; font-size:13.5px; padding:8px 16px; border:none; border-radius:var(--r-pill);
     background:transparent; color:var(--text-muted); cursor:pointer;
@@ -47,17 +55,29 @@
   .sync-note{ font-size:12.5px; color:var(--text-muted); padding: 8px 24px 0; }
   .sync-note.warn{ color: var(--low); }
 
-  main.wrap{ padding-top:6px; }
+  main.wrap{ padding-top:0; }
 
-  /* ---------- cover banner (full-bleed, no frame, no overlay text) ---------- */
+  /* ---------- cover banner (edge to edge, running under the nav) ---------- */
   .cover{
-    position:relative; margin: 0 -24px 26px; height:min(46vh, 380px); overflow:hidden;
+    position:relative; overflow:hidden;
+    width:100vw; margin-left:calc(50% - 50vw); margin-right:calc(50% - 50vw);
+    margin-bottom:26px; height:clamp(340px, 66vh, 620px);
   }
   .cover-img{
-    position:absolute; inset:0; background-size:cover; background-position:center 38%;
+    position:absolute; inset:0; background-size:cover; background-position:center 42%;
     background-image:url('images/cover-banner.jpg');
   }
-  .cover-fade{ position:absolute; left:0; right:0; bottom:0; height:90px; background:linear-gradient(0deg, var(--bg) 0%, rgba(20,20,20,0) 100%); }
+  /* One gradient does both jobs: darkens the top so the nav stays legible
+     over the photo, and dissolves the bottom edge into the page. */
+  .cover-fade{
+    position:absolute; inset:0;
+    background:linear-gradient(180deg,
+      rgba(20,20,20,.72) 0%,
+      rgba(20,20,20,.15) 18%,
+      rgba(20,20,20,0) 42%,
+      rgba(20,20,20,.55) 82%,
+      var(--bg) 100%);
+  }
 
   /* ---------- stat chips ---------- */
   .stats-row{ display:flex; gap:8px; margin: 34px 0 22px; flex-wrap:wrap; }
@@ -98,7 +118,7 @@
 
   /* ---------- now watching card ---------- */
   .now-card{ display:flex; gap:16px; padding:16px; margin-bottom:26px; align-items:center; }
-  .now-cover{ width:92px; height:130px; border-radius: var(--r-sm); flex-shrink:0; }
+  .now-cover{ width:96px; aspect-ratio:2/3; border-radius: var(--r-sm); flex-shrink:0; }
   .now-body{ flex:1; min-width:0; }
   .now-body .eyebrow{ color:var(--accent); font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; margin-bottom:4px; }
   .now-body h2{ font-size:19px; line-height:1.15; margin-bottom:4px; }
@@ -177,16 +197,18 @@
 
   .thumb{
     position:relative; flex:0 0 auto; width:168px; aspect-ratio:2/3; border-radius:var(--r-md); overflow:hidden;
-    cursor:pointer; scroll-snap-align:start; border:2px solid transparent; transition: transform .15s ease, border-color .15s ease;
+    cursor:pointer; scroll-snap-align:start; border:2px solid transparent; transition: border-color .15s ease;
   }
-  .thumb:hover{ transform: scale(1.035); }
   .thumb.selected{ border-color:var(--accent); }
   .thumb-fade{ position:absolute; inset:0; background:linear-gradient(0deg, rgba(0,0,0,.85) 0%, rgba(0,0,0,.05) 50%); }
-  .thumb-rating{ position:absolute; top:10px; left:10px; font-size:11.5px; font-weight:700; padding:3px 8px; border-radius:var(--r-pill); background:rgba(0,0,0,.55); }
+  .thumb-year{ position:absolute; top:10px; left:10px; font-size:11.5px; font-weight:700; padding:3px 8px; border-radius:var(--r-pill); background:rgba(0,0,0,.55); color:#fff; }
   .thumb-menu{
     position:absolute; top:8px; right:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2.5px;
     width:24px; height:24px; border-radius:50%; background:rgba(0,0,0,.45);
+    border:none; padding:0; cursor:pointer; z-index:2; transition: background .15s ease;
   }
+  .thumb-menu:hover{ background:var(--accent); }
+  .thumb-menu:hover span{ background:var(--accent-ink); }
   .thumb-menu span{ width:3px; height:3px; border-radius:50%; background:rgba(255,255,255,.85); }
   .thumb-title{ position:absolute; left:11px; right:11px; bottom:10px; font-weight:700; font-size:14.5px; line-height:1.2; color:#fff; }
 
@@ -239,8 +261,8 @@
     aspect-ratio:2/3; display:flex; flex-direction:column; justify-content:flex-end; color:#fff;
     transition: transform .15s ease; cursor:default;
   }
-  .poster:hover{ transform: scale(1.025); }
-  .poster-fade{ position:absolute; inset:0; background:linear-gradient(0deg, rgba(0,0,0,.92) 0%, rgba(0,0,0,.2) 45%, rgba(0,0,0,.05) 68%); }
+
+  .poster-fade{ position:absolute; inset:0; background:linear-gradient(0deg, rgba(0,0,0,.94) 0%, rgba(0,0,0,.78) 30%, rgba(0,0,0,.34) 56%, rgba(0,0,0,.02) 80%); }
   .poster-content{ position:relative; z-index:1; padding:12px 13px 14px; }
   .poster .rank{
     position:absolute; top:9px; left:9px; z-index:2; font-weight:800; font-size:12.5px;
@@ -250,7 +272,16 @@
   .poster .badge-slot{ position:absolute; top:9px; right:9px; z-index:2; background:rgba(0,0,0,.5); padding:3px 8px; border-radius:var(--r-pill); }
   .poster h3{ font-size:14.5px; line-height:1.15; margin-bottom:4px; }
   .poster .credit-line{ font-size:11px; color:var(--text-muted); margin-bottom:5px; }
-  .poster .credit-line strong{ color:#fff; font-weight:600; }
+  .poster .credit-line .person{ color:#fff; font-weight:600; }
+  .poster-edit{
+    position:absolute; top:10px; right:10px; z-index:2; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:2.5px; width:26px; height:26px; border-radius:50%;
+    background:rgba(0,0,0,.45); border:none; padding:0; cursor:pointer; opacity:0; transition: opacity .15s ease, background .15s ease;
+  }
+  .poster:hover .poster-edit, .poster-edit:focus-visible{ opacity:1; }
+  .poster-edit:hover{ background:var(--accent); }
+  .poster-edit span{ width:3px; height:3px; border-radius:50%; background:rgba(255,255,255,.9); }
+  .poster-edit:hover span{ background:var(--accent-ink); }
   .poster .chip{ background:rgba(255,255,255,.14); color:#fff; font-size:10.5px; padding:3px 8px; }
   .poster .ind-ratings{ font-size:10.5px; color:var(--text-muted); margin-top:5px; }
   .poster .trailer-link{ margin-top:8px; background:rgba(255,255,255,.14); font-size:11px; padding:6px 11px; }
@@ -258,12 +289,83 @@
 
   @media (max-width:640px){
     .wrap{ padding-left:16px; padding-right:16px; }
-    .cover{ margin: 0 -16px 22px; }
+    /* the cover stays edge-to-edge here too; only its height comes down */
+    .cover{ margin-bottom:22px; height:clamp(300px, 58vh, 460px); }
     .nav{ padding:14px 16px; }
     .brand{ font-size:15.5px; }
     .segtabs button{ padding:7px 12px; font-size:12.5px; }
     .grid2{ grid-template-columns:1fr; }
     .now-card{ flex-direction:column; align-items:flex-start; }
-    .now-cover{ width:100%; height:150px; }
+    .now-cover{ width:120px; height:auto; }
     .thumb{ width:140px; }
+  }
+
+  /* ---------- artwork layer ----------
+     The poster lives in its own element so hover can zoom the image alone.
+     The card keeps its size and clips the overflow, instead of the whole
+     component growing and cropping its own text. */
+  .art{
+    position:absolute; inset:0; z-index:0;
+    background-size:cover; background-position:center;
+    transition: transform .35s cubic-bezier(.2,.7,.3,1);
+  }
+  .thumb:hover .art, .poster:hover .art{ transform: scale(1.07); }
+  .now-cover{ position:relative; overflow:hidden; }
+  .thumb-fade, .poster-fade{ z-index:1; }
+  .thumb-title, .thumb-year, .poster-content, .poster .rank, .poster .badge-slot{ z-index:2; }
+
+  /* ---------- person = avatar hugging its name ---------- */
+  .person{ display:inline-flex; align-items:center; gap:5px; vertical-align:middle; font-weight:600; color:var(--text); }
+  .now-body .meta .person, .detail .date .person{ color:var(--text); }
+  .sep{ color:var(--text-faint); margin:0 2px; }
+  .chip{ display:inline-flex; align-items:center; gap:5px; }
+  .chips-preview{ margin:-4px 0 13px; }
+
+  /* the film's own facts, as opposed to who watched it */
+  .film-meta{ font-size:12px; color:var(--text-muted); margin-bottom:6px; display:flex; flex-wrap:wrap; gap:0 4px; }
+  .poster .film-meta{ font-size:10.5px; margin-bottom:4px; color:rgba(255,255,255,.72); }
+  .detail .film-meta{ margin:2px 0 6px; }
+
+  .input-with-avatar{ position:relative; display:flex; align-items:center; }
+  .input-with-avatar .avatar{ position:absolute; left:10px; pointer-events:none; }
+  .input-with-avatar input{ padding-left:40px; }
+
+  /* ---------- edit dialog ---------- */
+  body.modal-open{ overflow:hidden; }
+  #modal{ position:fixed; inset:0; z-index:60; display:none; }
+  #modal.open{ display:block; }
+  .modal-backdrop{ position:absolute; inset:0; background:rgba(0,0,0,.62); backdrop-filter:blur(3px); }
+  .modal-card{
+    position:relative; z-index:1; background:var(--surface); border-radius:var(--r-lg);
+    box-shadow:var(--shadow); padding:22px; width:min(560px, calc(100vw - 32px));
+    max-height:calc(100vh - 48px); overflow-y:auto;
+    margin:24px auto; animation: modal-in .18s ease-out;
+  }
+  @keyframes modal-in{ from{ opacity:0; transform:translateY(8px) scale(.985); } to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce){
+    .modal-card{ animation:none; }
+    .art{ transition:none; }
+  }
+  .modal-head{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:16px; }
+  .modal-head h2{ font-size:17px; }
+  .modal-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+
+  /* ---------- squircles ----------
+     Chrome 139+ can draw a real superellipse corner; `corner-shape` is
+     ignored everywhere else, which just leaves the plain rounded corners
+     above. Circles (avatars) and pills are deliberately left alone. */
+  @supports (corner-shape: squircle){
+    .card,
+    .modal-card,
+    .thumb,
+    .poster,
+    .now-cover,
+    .rate-panel,
+    .btn-add-toggle,
+    .form-error,
+    input,
+    textarea,
+    select{
+      corner-shape: squircle;
+    }
   }
