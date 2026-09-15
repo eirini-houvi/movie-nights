@@ -23,7 +23,14 @@ shows a warning at the top; nothing is saved.
 Every logged title is looked up automatically. Nothing to configure:
 
 - **Poster and release year** — IMDb's public suggestion endpoint, the one
-  behind IMDb's own search box. No key, no signup.
+  behind IMDb's own search box. No key, no signup. IMDb sends no
+  `Access-Control-Allow-Origin` header, so a browser won't read it directly;
+  `api/poster.js` fetches it server-side and hands the same JSON back from
+  this site's own origin. That function is deployed automatically by Vercel
+  and needs no configuration — but it does mean posters only appear when the
+  site is served by something that runs functions. Opened as a plain file, or
+  served by a bare static server, everything else still works and the films
+  keep their gradient covers.
 - **Genres and director** — Wikidata, which indexes films by their IMDb id,
   so the id from the first lookup is enough to ask for the rest. Also
   keyless.

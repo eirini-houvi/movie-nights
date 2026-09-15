@@ -303,7 +303,10 @@
   //   "missing" the source had no match — don't ask again for this title
   // A failed *request* (offline, rate limit, bad key) leaves the state
   // unset, so it's retried on the next page load.
-  var IMDB_SUGGEST = "https://v2.sg.media-imdb.com/suggestion/p/";
+  // Same-origin, because IMDb itself sends no Access-Control-Allow-Origin
+  // header and a browser therefore refuses to read it directly. api/poster.js
+  // fetches it server-side and hands the same JSON back from our own origin.
+  var IMDB_SUGGEST = "/api/poster?q=";
   var TMDB_API = "https://api.themoviedb.org/3";
   var TMDB_IMAGE = "https://image.tmdb.org/t/p/w500";
   var metaPending = {};  // night id -> true, so one lookup runs at a time
@@ -360,7 +363,7 @@
     if (metaPending[night.id]) return;
     metaPending[night.id] = true;
 
-    fetch(IMDB_SUGGEST + encodeURIComponent(night.movie.toLowerCase()) + ".json")
+    fetch(IMDB_SUGGEST + encodeURIComponent(night.movie.toLowerCase()))
       .then(function(res){
         if (!res.ok) throw new Error("imdb " + res.status);
         return res.json();
@@ -391,7 +394,11 @@
         fetchFacts(live);
       })
       .catch(function(){
+        // No /api route (opened as a plain file, or served by something with
+        // no functions), or IMDb itself is unhappy. Leave metaState unset so
+        // the next page load tries again, and let TMDB fill in if it can.
         delete metaPending[night.id];
+        fetchExtras(night);
       });
   }
 
