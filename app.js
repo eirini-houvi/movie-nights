@@ -1,5 +1,3 @@
-import { firebaseConfig } from "./firebase-config.js";
-
 (function(){
   "use strict";
 
@@ -9,22 +7,14 @@ import { firebaseConfig } from "./firebase-config.js";
     selectedId: null,
     pendingDelete: null,
     nights: [],
-    dbReady: false,
-    dbAvailable: null,
-    dbWriteError: "",
+    storageError: "",
     formError: "",
     draft: null,
     rateDraft: {},
     nextUpDraft: { pickedBy:"", house:"" },
-    nextUpLoaded: false,
     showAddForm: false
   };
 
-  var firebaseApp = null;
-  var dbHandle = null;
-  var fsApi = null; // the loaded firebase-firestore module, once it resolves
-  var col = null;
-  var nextUpRef = null;
   var app = document.getElementById("app");
   var syncNote = document.getElementById("syncNote");
 
@@ -156,126 +146,81 @@ import { firebaseConfig } from "./firebase-config.js";
   }
   state.draft = freshDraft();
 
-  // ---------- db wiring (Firebase Firestore) ----------
-  // Firebase is loaded with a dynamic import (not a static top-level one) so
-  // that if the CDN can't be reached &mdash; offline, a restrictive network,
-  // an ad-blocker &mdash; the whole page doesn't fail to load. It just falls
-  // back to local-only mode, same as an unconfigured firebase-config.js.
-  function initDb(){
-    if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.indexOf("YOUR_") === 0){
-      state.dbAvailable = false;
-      renderSyncNote();
-      render();
+  // ---------- storage (localStorage) ----------
+  // Everything lives in this browser only: one JSON blob under STORAGE_KEY,
+  // rewritten after every change. No accounts, no network, nothing shared —
+  // clearing site data or opening the site in another browser starts empty.
+  var STORAGE_KEY = "movie-rituals-v1";
+
+  function persist(){
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        nights: state.nights,
+        nextUp: { pickedBy: state.nextUpDraft.pickedBy, house: state.nextUpDraft.house }
+      }));
+      state.storageError = "";
+    } catch (e){
+      // Private-mode quotas, disabled site data, a full store — the app keeps
+      // working for this visit, it just can't remember anything.
+      state.storageError = "Couldn't save to this browser — changes will be lost when you close the tab.";
+    }
+  }
+
+  function loadLocal(){
+    var raw = null;
+    try {
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch (e){
+      state.storageError = "This browser is blocking local storage — nothing will be saved.";
       return;
     }
-    Promise.all([
-      import("https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js"),
-      import("https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js")
-    ]).then(function(mods){
-      var appApi = mods[0];
-      fsApi = mods[1];
-      firebaseApp = appApi.initializeApp(firebaseConfig);
-      dbHandle = fsApi.getFirestore(firebaseApp);
-      state.dbAvailable = true;
-      col = fsApi.collection(dbHandle, "nights");
-      nextUpRef = fsApi.doc(dbHandle, "meta", "nextUp");
-      renderSyncNote();
-      fsApi.onSnapshot(col, function(snap){
-        state.nights = snap.docs.map(function(d){
-          var data = d.data() || {};
-          data.id = d.id;
-          return data;
-        });
-        render();
-      }, function(err){
-        state.dbAvailable = false;
-        renderSyncNote();
-        render();
-      });
-      fsApi.onSnapshot(nextUpRef, function(snap){
-        var data = snap.exists() ? (snap.data() || {}) : {};
-        // Only hydrate the fields once, on first load — after that the
-        // person's own in-progress typing is authoritative (same reasoning
-        // as the add-screening draft above).
-        if (!state.nextUpLoaded){
-          state.nextUpDraft.pickedBy = data.pickedBy || "";
-          state.nextUpDraft.house = data.house || "";
-          state.nextUpLoaded = true;
-        }
-        render();
-      }, function(){
-        state.nextUpLoaded = true;
-        render();
-      });
-    }).catch(function(){
-      state.dbAvailable = false;
-      renderSyncNote();
-      render();
-    });
+    if (!raw) return;
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e){
+      state.storageError = "Saved data looked corrupted and was ignored.";
+      return;
+    }
+    if (data && Array.isArray(data.nights)){
+      state.nights = data.nights.filter(function(n){ return n && n.id; });
+    }
+    if (data && data.nextUp){
+      state.nextUpDraft.pickedBy = data.nextUp.pickedBy || "";
+      state.nextUpDraft.house = data.nextUp.house || "";
+    }
   }
 
   function renderSyncNote(){
-    if (state.dbAvailable === false){
+    if (state.storageError){
       syncNote.className = "sync-note warn";
-      syncNote.textContent = "Live sync isn't set up yet — add your Firebase config in firebase-config.js. Entries you add here will only last for this visit.";
-    } else if (state.dbAvailable === null){
-      syncNote.className = "sync-note";
-      syncNote.textContent = "Connecting…";
-    } else if (state.dbWriteError){
-      syncNote.className = "sync-note warn";
-      syncNote.textContent = state.dbWriteError;
+      syncNote.textContent = state.storageError;
     } else {
+      syncNote.className = "sync-note";
       syncNote.textContent = "";
     }
   }
 
   function addNight(data){
-    if (state.dbAvailable && fsApi && col){
-      fsApi.addDoc(col, data).catch(function(){
-        state.dbWriteError = "Couldn't save that screening — try again in a moment.";
-        renderSyncNote();
-      });
-    } else {
-      data.id = uid();
-      state.nights.push(data);
-      render();
-    }
+    data.id = uid();
+    state.nights.push(data);
+    persist();
+    render();
   }
   function updateNight(id, patch){
-    if (state.dbAvailable && fsApi && dbHandle){
-      fsApi.updateDoc(fsApi.doc(dbHandle, "nights", id), patch).catch(function(){
-        state.dbWriteError = "Couldn't save that change — try again in a moment.";
-        renderSyncNote();
-      });
-    } else {
-      var n = state.nights.find(function(x){ return x.id === id; });
-      if (n) Object.assign(n, patch);
-      render();
-    }
+    var n = state.nights.find(function(x){ return x.id === id; });
+    if (n) Object.assign(n, patch);
+    persist();
+    render();
   }
   function deleteNight(id){
-    if (state.dbAvailable && fsApi && dbHandle){
-      fsApi.deleteDoc(fsApi.doc(dbHandle, "nights", id)).catch(function(){
-        state.dbWriteError = "Couldn't remove that screening — try again in a moment.";
-        renderSyncNote();
-      });
-    } else {
-      state.nights = state.nights.filter(function(x){ return x.id !== id; });
-      render();
-    }
+    state.nights = state.nights.filter(function(x){ return x.id !== id; });
+    persist();
+    render();
   }
   function saveNextUp(field, value){
     state.nextUpDraft[field] = value;
-    var patch = { pickedBy: state.nextUpDraft.pickedBy, house: state.nextUpDraft.house };
-    if (state.dbAvailable && fsApi && nextUpRef){
-      fsApi.setDoc(nextUpRef, patch, { merge: true }).catch(function(){
-        state.dbWriteError = "Couldn't save that — try again in a moment.";
-        renderSyncNote();
-        render();
-      });
-    } else {
-      render();
-    }
+    persist();
   }
 
   // ---------- stats ----------
@@ -665,6 +610,6 @@ import { firebaseConfig } from "./firebase-config.js";
     else renderLog();
   }
 
-  initDb();
+  loadLocal();
   render();
 })();
