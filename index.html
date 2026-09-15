@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Movie Rituals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="brand">MOVIE<span class="dot">.</span>RITUALS</div>
+  <div class="segtabs">
+    <button class="active" data-view="log">Log</button>
+    <button data-view="recap">Recap</button>
+  </div>
+</nav>
+<div id="syncNote" class="sync-note"></div>
+
+<main class="wrap">
+  <div class="cover">
+    <div class="cover-img"></div>
+    <div class="cover-fade"></div>
+  </div>
+
+  <div id="app"></div>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
