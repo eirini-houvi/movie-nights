@@ -5,18 +5,40 @@ as a plain static site you can host anywhere.
 
 ## How data is stored
 
-Everything is kept in your browser's **localStorage**, under the key
-`movie-rituals-v1`. There's no database and no accounts:
+The screening log lives in **Supabase**, reached through this site's own
+`/api` routes, so everyone who opens the URL sees the same list and anything
+one person adds shows up for the rest.
 
-- Your screenings and the "Up Next" card persist across refreshes
-  and across browser restarts on **this browser, on this device**.
-- Nothing is shared. Opening the site in another browser, on a phone, or by
-  a friend shows an empty tracker — each person has their own copy.
-- Clearing site data (or using a private window) wipes it.
-- The only network calls are the movie lookups described below.
+Each browser also keeps a mirror in `localStorage`. That makes the page paint
+instantly on load instead of waiting on the network, and it keeps the tracker
+usable when the API isn't reachable at all — opened as a plain file, or served
+by something with no functions. In that case it quietly behaves like the
+old browser-only tracker, and the banner at the top says when the shared copy
+can't be reached.
 
-If the browser blocks storage entirely, the app still runs for the visit and
-shows a warning at the top; nothing is saved.
+### Setting up Supabase
+
+1. In Vercel, add the Supabase integration to the project (Settings →
+   Integrations). It sets `SUPABASE_URL` and the keys as environment
+   variables. The API routes prefer `SUPABASE_SERVICE_ROLE_KEY`; if your
+   integration didn't add one, add it by hand from Supabase → Settings → API.
+2. In Supabase, open **SQL Editor → New query**, paste the contents of
+   [`supabase.sql`](supabase.sql), and run it. That creates the two tables and
+   locks them down.
+3. Redeploy on Vercel so the functions pick up the variables.
+
+The first time the site loads against an empty shared log, it uploads
+whatever that browser already had, so nothing logged before the move is lost.
+That only happens while the shared log is empty, so a second browser with its
+own old copy can't pile duplicates on top.
+
+### Who can change it
+
+There is no sign-in: anyone with the URL can add and edit, which is how the
+tracker has always worked and suits a link shared in a group chat. The
+database itself is not open to the world, though — row-level security is on
+with no policies, so the only way in is through this site's API routes, and
+those do exactly what the tracker needs and nothing else.
 
 ## Movie posters and details
 

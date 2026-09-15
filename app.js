@@ -7,6 +7,8 @@
     pendingDelete: null,
     nights: [],
     storageError: "",
+    remoteOn: true,     // is the shared log reachable
+    remoteError: "",
     formError: "",
     draft: null,
     nextUpDraft: { date:"", pickedBy:"" },
@@ -182,10 +184,12 @@
   }
   state.draft = freshDraft();
 
-  // ---------- storage (localStorage) ----------
-  // Everything lives in this browser only: one JSON blob under STORAGE_KEY,
-  // rewritten after every change. No accounts, no network, nothing shared —
-  // clearing site data or opening the site in another browser starts empty.
+  // ---------- storage ----------
+  // The screening log lives in Supabase, reached through this site's own
+  // /api routes, so everyone who opens the URL sees the same list. The
+  // browser's localStorage is kept as a mirror: it makes the page render
+  // instantly on load, and it keeps the tracker usable when the API isn't
+  // there at all (opened as a plain file, or a bare static server).
   var STORAGE_KEY = "movie-rituals-v1";
 
   function persist(){
@@ -194,10 +198,10 @@
         nights: state.nights,
         nextUp: { date: state.nextUpDraft.date, pickedBy: state.nextUpDraft.pickedBy }
       }));
-      state.storageError = "";
+      if (!state.remoteError) state.storageError = "";
     } catch (e){
       // Private-mode quotas, disabled site data, a full store — the app keeps
-      // working for this visit, it just can't remember anything.
+      // working for this visit, it just can't remember anything locally.
       state.storageError = "Couldn't save to this browser — changes will be lost when you close the tab.";
     }
   }
@@ -234,12 +238,129 @@
       state.nextUpDraft.pickedBy = data.nextUp.pickedBy || "";
       state.nextUpDraft.date = data.nextUp.date || "";
     }
-    // Written only after every field is back in state — persisting mid-load
-    // would save the half-restored version over the real one.
     if (changed) persist();
   }
 
+  // ---------- the shared copy ----------
+  function api(path, options){
+    return fetch(path, options).then(function(res){
+      return res.json().catch(function(){ return null; }).then(function(body){
+        if (!res.ok){
+          var err = new Error((body && body.error) || ("http " + res.status));
+          err.status = res.status;
+          err.body = body;
+          throw err;
+        }
+        return body;
+      });
+    });
+  }
+
+  // Anything the API says about its own configuration is worth showing
+  // verbatim — it names the exact step still outstanding.
+  function remoteProblem(err){
+    if (!err) return "";
+    if (err.status === 404) return ""; // no /api at all: local-only, not an error
+    var body = err.body || {};
+    if (body.error === "supabase_not_configured"){
+      return "The shared log isn't connected yet — " + (body.detail || "add the Supabase keys in Vercel and redeploy.");
+    }
+    if (body.error === "table_missing"){
+      return "Supabase is connected but the tables are missing — run the SQL from the README in the Supabase SQL editor.";
+    }
+    return "Couldn't reach the shared log, so you're seeing this browser's copy. It'll sync when the connection is back.";
+  }
+
+  function pullRemote(){
+    if (!state.remoteOn) return Promise.resolve(false);
+    return Promise.all([ api("/api/nights"), api("/api/nextup") ])
+      .then(function(results){
+        var nights = (results[0] && results[0].nights) || [];
+        var nextUp = (results[1] && results[1].nextUp) || {};
+
+        // First run against an empty shared log: hand it whatever this
+        // browser already had, so nothing logged before the move is lost.
+        // Guarded by the server being empty, so a second browser with its
+        // own local copy can't pile duplicates on top.
+        if (!nights.length && state.nights.length){
+          return pushAll().then(function(){ return true; });
+        }
+
+        state.nights = nights.map(function(n){
+          var cased = titleCase(n.movie);
+          if (cased !== n.movie) n.movie = cased;
+          return n;
+        });
+        state.nextUpDraft.date = nextUp.date || state.nextUpDraft.date || "";
+        state.nextUpDraft.pickedBy = nextUp.pickedBy || "";
+        state.remoteError = "";
+        persist();
+        render();
+        fetchMissingMeta();
+        return true;
+      })
+      .catch(function(err){
+        state.remoteOn = err.status !== 404;
+        state.remoteError = remoteProblem(err);
+        render();
+        return false;
+      });
+  }
+
+  function pushAll(){
+    var jobs = state.nights.map(function(n){ return pushNight(n); });
+    jobs.push(pushNextUp());
+    return Promise.all(jobs).then(function(){
+      state.remoteError = "";
+      render();
+    });
+  }
+
+  function pushNight(n){
+    if (!state.remoteOn) return Promise.resolve();
+    return api("/api/nights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(n)
+    }).catch(function(err){
+      state.remoteOn = err.status !== 404;
+      state.remoteError = remoteProblem(err);
+      renderSyncNote();
+    });
+  }
+
+  function removeNightRemote(id){
+    if (!state.remoteOn) return Promise.resolve();
+    return api("/api/nights?id=" + encodeURIComponent(id), { method: "DELETE" })
+      .catch(function(err){
+        state.remoteOn = err.status !== 404;
+        state.remoteError = remoteProblem(err);
+        renderSyncNote();
+      });
+  }
+
+  function pushNextUp(){
+    if (!state.remoteOn) return Promise.resolve();
+    return api("/api/nextup", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        date: state.nextUpDraft.date,
+        pickedBy: state.nextUpDraft.pickedBy
+      })
+    }).catch(function(err){
+      state.remoteOn = err.status !== 404;
+      state.remoteError = remoteProblem(err);
+      renderSyncNote();
+    });
+  }
+
   function renderSyncNote(){
+    if (state.remoteError){
+      syncNote.className = "sync-note warn";
+      syncNote.textContent = state.remoteError;
+      return;
+    }
     if (state.storageError){
       syncNote.className = "sync-note warn";
       syncNote.textContent = state.storageError;
@@ -254,6 +375,7 @@
     state.nights.push(data);
     persist();
     render();
+    pushNight(data);
     fetchMeta(data);
   }
   function updateNight(id, patch){
@@ -274,16 +396,19 @@
     }
     persist();
     render();
+    pushNight(n);
     if (retitled) fetchMeta(n);
   }
   function deleteNight(id){
     state.nights = state.nights.filter(function(x){ return x.id !== id; });
     persist();
     render();
+    removeNightRemote(id);
   }
   function saveNextUp(field, value){
     state.nextUpDraft[field] = value;
     persist();
+    pushNextUp();
   }
 
   // ---------- movie metadata ----------
@@ -391,6 +516,7 @@
         }
         persist();
         render();
+        pushNight(live);
         fetchFacts(live);
       })
       .catch(function(){
@@ -460,6 +586,7 @@
         }
         persist();
         render();
+        pushNight(live);
       })
       .catch(function(){
         delete factsPending[night.id];
@@ -533,6 +660,7 @@
     live.extraState = "found";
     persist();
     render();
+    pushNight(live);
   }
 
   function fetchMeta(night){
@@ -1252,5 +1380,9 @@
 
   loadLocal();
   render();
-  fetchMissingMeta();
+  pullRemote().then(function(synced){
+    // Without a reachable API this stays a local-only tracker, so the
+    // lookups still need kicking off here.
+    if (!synced) fetchMissingMeta();
+  });
 })();
